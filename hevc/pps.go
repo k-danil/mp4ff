@@ -19,8 +19,7 @@ type PPS struct {
 	NumExtraSliceHeaderBits                uint8
 	SignDataHidingEnabledFlag              bool
 	CabacInitPresentFlag                   bool
-	NumRefIdxL0DefaultActiveMinus1         uint8
-	NumRefIdxL1DefaultActiveMinus1         uint8
+	NumRefIdxDefaultActiveMinus1           [2]uint8
 	InitQpMinus26                          int8
 	ConstrainedIntraPredFlag               bool
 	TransformSkipEnabledFlag               bool
@@ -202,8 +201,8 @@ func ParsePPSNALUnit(data []byte, spsMap map[uint32]*SPS) (*PPS, error) {
 	pps.SignDataHidingEnabledFlag = r.ReadFlag()
 	pps.CabacInitPresentFlag = r.ReadFlag()
 	// value shall be in the range of 0 to 14, inclusive
-	pps.NumRefIdxL0DefaultActiveMinus1 = uint8(r.ReadExpGolomb())
-	pps.NumRefIdxL1DefaultActiveMinus1 = uint8(r.ReadExpGolomb())
+	pps.NumRefIdxDefaultActiveMinus1[0] = uint8(r.ReadExpGolomb())
+	pps.NumRefIdxDefaultActiveMinus1[1] = uint8(r.ReadExpGolomb())
 	// value shall be in the range of −( 26 + QpBdOffsetY ) to +25, inclusive
 	pps.InitQpMinus26 = int8(r.ReadSignedGolomb())
 	pps.ConstrainedIntraPredFlag = r.ReadFlag()

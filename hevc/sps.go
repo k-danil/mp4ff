@@ -46,6 +46,8 @@ type SPS struct {
 	NumShortTermRefPicSets               byte
 	ShortTermRefPicSets                  []ShortTermRPS
 	LongTermRefPicsPresentFlag           bool
+	NumLongTermRefPics                   uint
+	LongTermRefPicSets                   []LongTermRPS
 	SpsTemporalMvpEnabledFlag            bool
 	StrongIntraSmoothingEnabledFlag      bool
 	VUIParametersPresentFlag             bool
@@ -222,11 +224,12 @@ func ParseSPSNALUnit(data []byte) (*SPS, error) {
 
 	sps.LongTermRefPicsPresentFlag = r.ReadFlag()
 	if sps.LongTermRefPicsPresentFlag {
-		// Get passed this without storing the information
-		numLongTermRefPics := r.ReadExpGolomb()
-		for i := uint(0); i < numLongTermRefPics; i++ {
-			/* ltRefPicPocLsbSps[i] */ _ = r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4))
-			/* usedByCurrPicLtSps = */ _ = r.ReadFlag()
+		sps.NumLongTermRefPics = r.ReadExpGolomb()
+		for i := uint(0); i < sps.NumLongTermRefPics; i++ {
+			sps.LongTermRefPicSets = append(sps.LongTermRefPicSets, LongTermRPS{
+				PocLsbLt:            r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4)),
+				UsedByCurrPicLtFlag: r.ReadFlag(),
+			})
 		}
 	}
 	sps.SpsTemporalMvpEnabledFlag = r.ReadFlag()
@@ -347,6 +350,24 @@ type ShortTermRPS struct {
 	NumNegativePics byte
 	NumPositivePics byte
 	NumDeltaPocs    byte
+}
+
+func (stps *ShortTermRPS) CountNegAndPosPics() uint8 {
+	var NumPicTotalCurr uint8
+	if stps == nil {
+		return NumPicTotalCurr
+	}
+	for _, n := range stps.UsedByCurrPicS0 {
+		if n {
+			NumPicTotalCurr++
+		}
+	}
+	for _, p := range stps.UsedByCurrPicS1 {
+		if p {
+			NumPicTotalCurr++
+		}
+	}
+	return NumPicTotalCurr
 }
 
 const maxSTRefPics = 16
