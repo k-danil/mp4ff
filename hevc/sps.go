@@ -52,6 +52,16 @@ type SPS struct {
 	StrongIntraSmoothingEnabledFlag      bool
 	VUIParametersPresentFlag             bool
 	VUI                                  *VUIParameters
+	ExtensionPresentFlag                 bool
+	RangeExtensionFlag                   bool
+	MultilayerExtensionFlag              bool
+	D3ExtensionFlag                      bool
+	SccExtensionFlag                     bool
+	Extension4bits                       uint8
+	RangeExtension                       *SPSRangeExtension
+	//MultilayerExtension
+	//D3Extension
+	SccExtension *SPSSccExtension
 }
 
 // ProfileTierLevel according to ISO/IEC 23008-2 Section 7.3.3
@@ -130,6 +140,30 @@ type BitstreamRestrictions struct {
 	MaxBitsPerMinCuDenom        uint
 	Log2MaxMvLengthHorizontal   uint
 	Log2MaxMvLengthVertical     uint
+}
+
+type SPSRangeExtension struct {
+	TransformSkipRotationEnabledFlag    bool
+	TransformSkipContextEnabledFlag     bool
+	ImplicitRdpcmEnabledFlag            bool
+	ExplicitRdpcmEnabledFlag            bool
+	ExtendedPrecisionProcessingFlag     bool
+	IntraSmoothingDisabledFlag          bool
+	HighPrecisionOffsetsEnabledFlag     bool
+	PersistentRiceAdaptationEnabledFlag bool
+	CabacBypassAlignmentEnabledFlag     bool
+}
+
+type SPSSccExtension struct {
+	CurrPicRefEnabledFlag                   bool
+	PaletteModeEnabledFlag                  bool
+	PaletteMaxSize                          uint
+	DeltaPaletteMaxPredictorSize            uint
+	PalettePredictorInitializersPresentFlag bool
+	NumPalettePredictorInitializersMinus1   uint
+	PalettePredictorInitializer             [][]uint
+	MotionVectorResolutionControlIdc        uint8
+	IntraBoundaryFilteringDisabledFlag      bool
 }
 
 // ParseSPSNALUnit parses SPS NAL unit starting with NAL unit header
@@ -237,6 +271,28 @@ func ParseSPSNALUnit(data []byte) (*SPS, error) {
 	sps.VUIParametersPresentFlag = r.ReadFlag()
 	if sps.VUIParametersPresentFlag {
 		sps.VUI = parseVUI(r)
+	}
+	sps.ExtensionPresentFlag = r.ReadFlag()
+	if sps.ExtensionPresentFlag {
+		sps.RangeExtensionFlag = r.ReadFlag()
+		sps.MultilayerExtensionFlag = r.ReadFlag()
+		sps.D3ExtensionFlag = r.ReadFlag()
+		sps.SccExtensionFlag = r.ReadFlag()
+		sps.Extension4bits = uint8(r.Read(4))
+	}
+
+	if sps.RangeExtensionFlag {
+		sps.RangeExtension = parseSPSRangeExtension(r)
+	}
+	//if sps.MultilayerExtensionFlag {
+	//
+	//}
+	//if sps.D3ExtensionFlag {
+	//
+	//}
+	if sps.SccExtensionFlag {
+		sps.SccExtension = parseSPSSccExtension(r, sps.ChromaFormatIDC,
+			sps.BitDepthLumaMinus8, sps.BitDepthChromaMinus8)
 	}
 
 	return sps, r.AccError()
@@ -460,4 +516,55 @@ func readPastScalingListData(r *bits.AccErrEBSPReader) {
 			}
 		}
 	}
+}
+
+func parseSPSRangeExtension(r *bits.AccErrEBSPReader) *SPSRangeExtension {
+	ext := &SPSRangeExtension{
+		TransformSkipRotationEnabledFlag:    r.ReadFlag(),
+		TransformSkipContextEnabledFlag:     r.ReadFlag(),
+		ImplicitRdpcmEnabledFlag:            r.ReadFlag(),
+		ExplicitRdpcmEnabledFlag:            r.ReadFlag(),
+		ExtendedPrecisionProcessingFlag:     r.ReadFlag(),
+		IntraSmoothingDisabledFlag:          r.ReadFlag(),
+		HighPrecisionOffsetsEnabledFlag:     r.ReadFlag(),
+		PersistentRiceAdaptationEnabledFlag: r.ReadFlag(),
+		CabacBypassAlignmentEnabledFlag:     r.ReadFlag(),
+	}
+	return ext
+}
+
+func parseSPSSccExtension(r *bits.AccErrEBSPReader, ChromaFormatIDC,
+	BitDepthLumaMinus8, BitDepthChromaMinus8 byte) *SPSSccExtension {
+	ext := &SPSSccExtension{}
+	ext.CurrPicRefEnabledFlag = r.ReadFlag()
+	ext.PaletteModeEnabledFlag = r.ReadFlag()
+	if ext.PaletteModeEnabledFlag {
+		ext.PaletteMaxSize = r.ReadExpGolomb()
+		ext.DeltaPaletteMaxPredictorSize = r.ReadExpGolomb()
+		ext.PalettePredictorInitializersPresentFlag = r.ReadFlag()
+		if ext.PalettePredictorInitializersPresentFlag {
+			ext.NumPalettePredictorInitializersMinus1 = r.ReadExpGolomb()
+			numComps := 3
+			if ChromaFormatIDC == 0 {
+				numComps = 1
+			}
+			ext.PalettePredictorInitializer = make([][]uint, numComps)
+			// Fill luma
+			for i := uint(0); i <= ext.NumPalettePredictorInitializersMinus1; i++ {
+				ext.PalettePredictorInitializer[0] =
+					append(ext.PalettePredictorInitializer[0], r.Read(int(BitDepthLumaMinus8+8)))
+			}
+			// Fill chroma if any
+			for comp := 1; comp < numComps; comp++ {
+				for i := uint(0); i <= ext.NumPalettePredictorInitializersMinus1; i++ {
+					ext.PalettePredictorInitializer[comp] =
+						append(ext.PalettePredictorInitializer[comp], r.Read(int(BitDepthChromaMinus8+8)))
+				}
+			}
+		}
+	}
+	ext.MotionVectorResolutionControlIdc = uint8(r.Read(2))
+	ext.IntraBoundaryFilteringDisabledFlag = r.ReadFlag()
+
+	return ext
 }

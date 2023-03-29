@@ -169,6 +169,13 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 	if !sh.DependentSliceSegmentFlag {
 		var NumPicTotalCurr uint8
 
+		// The variable ChromaArrayType is derived as equal to 0 when separate_colour_plane_flag is equal to 1
+		// and chroma_format_idc is equal to 3.
+		ChromaArrayType := sps.ChromaFormatIDC
+		if sps.SeparateColourPlaneFlag && sps.ChromaFormatIDC == 3 {
+			ChromaArrayType = 0
+		}
+
 		// Decoders shall ignore the presence and value of slice_reserved_flag[ i ]
 		for i := uint8(0); i < pps.NumExtraSliceHeaderBits; i++ {
 			_ = r.ReadFlag()
@@ -229,10 +236,7 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 		}
 		if sps.SampleAdaptiveOffsetEnabledFlag {
 			sh.SaoLumaFlag = r.ReadFlag()
-			// The variable ChromaArrayType is derived as equal to 0 when separate_colour_plane_flag is equal to 1
-			// and chroma_format_idc is equal to 3.
-			// ChromaArrayType != 0
-			if !(sps.SeparateColourPlaneFlag && sps.ChromaFormatIDC == 3) {
+			if ChromaArrayType != 0 {
 				sh.SaoChromaFlag = r.ReadFlag()
 			}
 		}
@@ -281,14 +285,13 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 				(pps.WeightedBipredFlag && sh.SliceType == SLICE_B) {
 				var err error
 				// fix chromaArrayType
-				sh.PredWeightTable, err = parsePredWeightTable(r, sh.SliceType, sh.NumRefIdxActiveMinus1, 1)
+				sh.PredWeightTable, err = parsePredWeightTable(r, sh.SliceType, sh.NumRefIdxActiveMinus1, ChromaArrayType)
 				if err != nil {
 					return sh, err
 				}
 			}
 			sh.FiveMinusMaxNumMergeCand = r.ReadExpGolomb()
-			// if( motion_vector_resolution_control_idc = = 2 )
-			if false {
+			if sps.SccExtension != nil && sps.SccExtension.MotionVectorResolutionControlIdc == 2 {
 				sh.UseIntegerMvFlag = r.ReadFlag()
 			}
 		}
@@ -378,7 +381,7 @@ func parseRefPicListsModification(r *bits.AccErrEBSPReader, sliceType SliceType,
 }
 
 func parsePredWeightTable(r *bits.AccErrEBSPReader, sliceType SliceType,
-	refIdx [2]uint8, chromaArrayType int) (*PredWeightTable, error) {
+	refIdx [2]uint8, chromaArrayType byte) (*PredWeightTable, error) {
 	pwt := &PredWeightTable{
 		LumaLog2WeightDenom: r.ReadExpGolomb(),
 	}
