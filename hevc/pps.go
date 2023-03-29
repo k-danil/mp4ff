@@ -51,19 +51,19 @@ type PPS struct {
 	SliceSegmentHeaderExtensionPresentFlag bool
 	ExtensionPresentFlag                   bool
 	RangeExtensionFlag                     bool
-	RangeExtension                         *RangeExtension
+	RangeExtension                         *PPSRangeExtension
 	MultilayerExtensionFlag                bool
-	MultilayerExtension                    *MultilayerExtension
+	MultilayerExtension                    *PPSMultilayerExtension
 	// PPS 3D extension
 	D3ExtensionFlag   bool
-	D3Extension       *D3Extension
+	D3Extension       *PPS3dExtension
 	SccExtensionFlag  bool
-	SccExtension      *SccExtension
+	SccExtension      *PPSSccExtension
 	Extension4bits    uint8
 	ExtensionDataFlag []bool
 }
 
-type RangeExtension struct {
+type PPSRangeExtension struct {
 	Log2MaxTransformSkipBlockSizeMinus2 uint
 	CrossComponentPredictionEnabledFlag bool
 	ChromaQpOffsetListEnabledFlag       bool
@@ -75,7 +75,7 @@ type RangeExtension struct {
 	Log2SaoOffsetScaleChroma            uint
 }
 
-type MultilayerExtension struct {
+type PPSMultilayerExtension struct {
 	PocResetInfoPresentFlag  bool
 	InferScalingListFlag     bool
 	ScalingListRefLayerId    uint8
@@ -129,7 +129,7 @@ type Octant struct {
 	}
 }
 
-type SccExtension struct {
+type PPSSccExtension struct {
 	CurrPicRefEnabledFlag                      bool
 	ResidualAdaptiveColourTransformEnabledFlag bool
 	SliceActQpOffsetsPresentFlag               bool
@@ -144,8 +144,8 @@ type SccExtension struct {
 	PalettePredictorInitializer                [][]uint
 }
 
-// D3Extension represent PPS 3D extension
-type D3Extension struct {
+// PPS3dExtension represent PPS 3D extension
+type PPS3dExtension struct {
 	DltsPresentFlag              bool
 	NumDepthLayersMinus1         uint8
 	BitDepthForDepthLayersMinus8 uint8
@@ -266,25 +266,25 @@ func ParsePPSNALUnit(data []byte, spsMap map[uint32]*SPS) (*PPS, error) {
 	}
 
 	if pps.RangeExtensionFlag {
-		pps.RangeExtension, err = parseRangeExtension(r, pps.TransformSkipEnabledFlag)
+		pps.RangeExtension, err = parsePPSRangeExtension(r, pps.TransformSkipEnabledFlag)
 		if err != nil {
 			return pps, err
 		}
 	}
 	if pps.MultilayerExtensionFlag {
-		pps.MultilayerExtension, err = parseMultilayerExtension(r)
+		pps.MultilayerExtension, err = parsePPSMultilayerExtension(r)
 		if err != nil {
 			return pps, err
 		}
 	}
 	if pps.D3ExtensionFlag {
-		pps.D3Extension, err = parse3dExtension(r)
+		pps.D3Extension, err = parsePPS3dExtension(r)
 		if err != nil {
 			return pps, err
 		}
 	}
 	if pps.SccExtensionFlag {
-		pps.SccExtension, err = parseSccExtension(r)
+		pps.SccExtension, err = parsePPSSccExtension(r)
 		if err != nil {
 			return pps, err
 		}
@@ -321,8 +321,8 @@ func ParsePPSNALUnit(data []byte, spsMap map[uint32]*SPS) (*PPS, error) {
 	return pps, nil
 }
 
-func parseRangeExtension(r *bits.AccErrEBSPReader, transformSkipEnabled bool) (*RangeExtension, error) {
-	ext := &RangeExtension{}
+func parsePPSRangeExtension(r *bits.AccErrEBSPReader, transformSkipEnabled bool) (*PPSRangeExtension, error) {
+	ext := &PPSRangeExtension{}
 	if transformSkipEnabled {
 		ext.Log2MaxTransformSkipBlockSizeMinus2 = r.ReadExpGolomb()
 	}
@@ -347,8 +347,8 @@ func parseRangeExtension(r *bits.AccErrEBSPReader, transformSkipEnabled bool) (*
 	return ext, nil
 }
 
-func parseMultilayerExtension(r *bits.AccErrEBSPReader) (*MultilayerExtension, error) {
-	ext := &MultilayerExtension{}
+func parsePPSMultilayerExtension(r *bits.AccErrEBSPReader) (*PPSMultilayerExtension, error) {
+	ext := &PPSMultilayerExtension{}
 	ext.PocResetInfoPresentFlag = r.ReadFlag()
 	ext.InferScalingListFlag = r.ReadFlag()
 	if ext.InferScalingListFlag {
@@ -500,8 +500,8 @@ func makeKeyOctant(idxShiftY, idxCb, idxCr uint) string {
 	return fmt.Sprintf("%d-%d-%d", idxShiftY, idxCb, idxCr)
 }
 
-func parseSccExtension(r *bits.AccErrEBSPReader) (*SccExtension, error) {
-	ext := &SccExtension{}
+func parsePPSSccExtension(r *bits.AccErrEBSPReader) (*PPSSccExtension, error) {
+	ext := &PPSSccExtension{}
 	ext.CurrPicRefEnabledFlag = r.ReadFlag()
 	ext.ResidualAdaptiveColourTransformEnabledFlag = r.ReadFlag()
 	if ext.ResidualAdaptiveColourTransformEnabledFlag {
@@ -544,8 +544,8 @@ func parseSccExtension(r *bits.AccErrEBSPReader) (*SccExtension, error) {
 	return ext, nil
 }
 
-func parse3dExtension(r *bits.AccErrEBSPReader) (*D3Extension, error) {
-	ext := &D3Extension{}
+func parsePPS3dExtension(r *bits.AccErrEBSPReader) (*PPS3dExtension, error) {
+	ext := &PPS3dExtension{}
 	ext.DltsPresentFlag = r.ReadFlag()
 	if ext.DltsPresentFlag {
 		ext.NumDepthLayersMinus1 = uint8(r.Read(6))
