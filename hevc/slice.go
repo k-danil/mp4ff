@@ -32,8 +32,8 @@ func (s SliceType) String() string {
 
 // HEVC slice types
 const (
-	SLICE_P = SliceType(0)
-	SLICE_B = SliceType(1)
+	SLICE_B = SliceType(0)
+	SLICE_P = SliceType(1)
 	SLICE_I = SliceType(2)
 )
 
@@ -66,7 +66,7 @@ type SliceHeader struct {
 	PredWeightTable                   *PredWeightTable
 	FiveMinusMaxNumMergeCand          uint
 	UseIntegerMvFlag                  bool
-	QpDelta                           bool
+	QpDelta                           int
 	CbQpOffset                        int
 	CrQpOffset                        int
 	ActYQpOffset                      int
@@ -121,8 +121,9 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 
 	buf := bytes.NewBuffer(nalu)
 	r := bits.NewAccErrEBSPReader(buf)
-	naluHdrBits := r.Read(8)
-	naluType := GetNaluType(byte(naluHdrBits>>1) & 0x3f)
+
+	naluHdrBits := r.Read(16)
+	naluType := GetNaluType(byte(naluHdrBits >> 8))
 	sh.FirstSliceSegmentInPicFlag = r.ReadFlag()
 	if naluType >= NALU_BLA_W_LP && naluType <= NALU_IRAP_VCL23 {
 		sh.NoOutputOfPriorPicsFlag = r.ReadFlag()
@@ -295,7 +296,7 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 				sh.UseIntegerMvFlag = r.ReadFlag()
 			}
 		}
-		sh.QpDelta = r.ReadFlag()
+		sh.QpDelta = r.ReadSignedGolomb()
 		if pps.SliceChromaQpOffsetsPresentFlag {
 			sh.CbQpOffset = r.ReadSignedGolomb()
 			sh.CrQpOffset = r.ReadSignedGolomb()
@@ -313,11 +314,9 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 		}
 		if sh.DeblockingFilterOverrideFlag {
 			sh.DeblockingFilterDisabledFlag = r.ReadFlag()
-			{
-				if !sh.DeblockingFilterDisabledFlag {
-					sh.BetaOffsetDiv2 = r.ReadSignedGolomb()
-					sh.TcOffsetDiv2 = r.ReadSignedGolomb()
-				}
+			if !sh.DeblockingFilterDisabledFlag {
+				sh.BetaOffsetDiv2 = r.ReadSignedGolomb()
+				sh.TcOffsetDiv2 = r.ReadSignedGolomb()
 			}
 		}
 		if pps.LoopFilterAcrossSlicesEnabledFlag &&
@@ -342,15 +341,17 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 		}
 	}
 
+	alignmentBitEqualToOne := r.ReadFlag()
+	if !alignmentBitEqualToOne {
+		return sh, errors.New("alignment bit is not equal to one")
+	}
+
 	if r.AccError() != nil {
 		return nil, r.AccError()
 	}
 
 	/* compute the size in bytes. Round up if not an integral number of bytes .*/
 	sh.Size = uint32(r.NrBytesRead())
-	if r.NrBitsReadInCurrentByte() > 0 {
-		sh.Size++
-	}
 
 	return sh, nil
 }
