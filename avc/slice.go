@@ -348,8 +348,8 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 
 	/* compute the size in bytes. Round up if not an integral number of bytes .*/
 	sh.Size = uint32(r.NrBytesRead())
-	if r.NrBitsReadInCurrentByte() > 0 {
-		sh.Size++
+	if r.NrBitsReadInCurrentByte() == 0 {
+		sh.Size--
 	}
 
 	return &sh, nil
