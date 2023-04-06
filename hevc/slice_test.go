@@ -66,7 +66,12 @@ func TestParseSliceHeader(t *testing.T) {
 			PredWeightTable: &PredWeightTable{
 				LumaLog2WeightDenom:        7,
 				DeltaChromaLog2WeightDenom: -1,
-				WeightsL0:                  []Weight{{}},
+				WeightsL0: []Weight{
+					{
+						LumaWeightFlag:   false,
+						ChromaWeightFlag: false,
+					},
+				},
 			},
 			FiveMinusMaxNumMergeCand: 2,
 			QpDelta:                  7,

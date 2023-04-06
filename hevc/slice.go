@@ -343,29 +343,38 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 		if sh.NumEntryPointOffsets > 0 {
 			// value shall be in the range of 0 to 31, inclusive
 			sh.OffsetLenMinus1 = uint8(r.ReadExpGolomb())
-			for i := uint(0); i < sh.NumEntryPointOffsets; i++ {
-				sh.EntryPointOffsetMinus1 = append(sh.EntryPointOffsetMinus1, uint32(r.Read(int(sh.OffsetLenMinus1+1))))
+			if sh.NumEntryPointOffsets > 0 {
+				sh.EntryPointOffsetMinus1 = make([]uint32, sh.NumEntryPointOffsets)
+				for i := uint(0); i < sh.NumEntryPointOffsets; i++ {
+					sh.EntryPointOffsetMinus1[i] = uint32(r.Read(int(sh.OffsetLenMinus1 + 1)))
+				}
 			}
 		}
 	}
 	if pps.SliceSegmentHeaderExtensionPresentFlag {
 		// value shall be in the range of 0 to 256, inclusive
 		sh.SegmentHeaderExtensionLength = uint16(r.ReadExpGolomb())
-		for i := uint16(0); i < sh.SegmentHeaderExtensionLength; i++ {
-			sh.SegmentHeaderExtensionDataByte = append(sh.SegmentHeaderExtensionDataByte, byte(r.Read(8)))
+		if sh.SegmentHeaderExtensionLength > 0 {
+			sh.SegmentHeaderExtensionDataByte = make([]byte, sh.SegmentHeaderExtensionLength)
+			for i := uint16(0); i < sh.SegmentHeaderExtensionLength; i++ {
+				sh.SegmentHeaderExtensionDataByte[i] = byte(r.Read(8))
+			}
 		}
 	}
 
-	alignmentBitEqualToOne := r.ReadFlag()
-	if !alignmentBitEqualToOne {
+	if !r.ReadFlag() {
 		return sh, errors.New("alignment bit is not equal to one")
+	}
+	for 8-r.NrBitsReadInCurrentByte() > 0 {
+		if r.ReadFlag() {
+			return sh, errors.New("bit after alignment is not equal to zero")
+		}
 	}
 
 	if r.AccError() != nil {
 		return nil, r.AccError()
 	}
 
-	/* compute the size in bytes. Round up if not an integral number of bytes .*/
 	sh.Size = uint32(r.NrBytesRead())
 
 	return sh, nil
@@ -377,6 +386,7 @@ func parseRefPicListsModification(r *bits.AccErrEBSPReader, sliceType SliceType,
 		RefPicListModificationFlagL0: r.ReadFlag(),
 	}
 	if rplm.RefPicListModificationFlagL0 {
+		rplm.ListEntryL0 = make([]uint8, refIdx[0])
 		for i := uint8(0); i <= refIdx[0]; i++ {
 			rplm.ListEntryL0 = append(rplm.ListEntryL0, uint8(r.Read(bits.CeilLog2(uint(numPicTotalCurr)))))
 		}
