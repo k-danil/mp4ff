@@ -7,12 +7,8 @@ import (
 	"github.com/Eyevinn/mp4ff/bits"
 )
 
-// Errors for parsing and handling HEVC slices
-var (
-	ErrNoSliceHeader      = errors.New("No slice header")
-	ErrInvalidSliceType   = errors.New("Invalid slice type")
-	ErrTooFewBytesToParse = errors.New("Too few bytes to parse symbol")
-)
+// This parser based on Rec. ITU-T H.265 v5 (02/2018) and ISO/IEC 23008-2 Ed. 5
+// It implements specification 7.3.6 . Annex F/I extensions aren't supported yet.
 
 // SliceType - HEVC slice type
 type SliceType uint
@@ -48,7 +44,7 @@ type SliceHeader struct {
 	ColourPlaneId                     uint8
 	PicOrderCntLsb                    uint16
 	ShortTermRefPicSetSpsFlag         bool
-	ShortTermRefPicSet                *ShortTermRPS
+	ShortTermRefPicSet                ShortTermRPS
 	ShortTermRefPicSetIdx             byte
 	NumLongTermSps                    uint
 	NumLongTermPics                   uint
@@ -64,30 +60,30 @@ type SliceHeader struct {
 	CollocatedFromL0Flag              bool
 	CollocatedRefIdx                  uint
 	PredWeightTable                   *PredWeightTable
-	FiveMinusMaxNumMergeCand          uint
+	FiveMinusMaxNumMergeCand          uint8
 	UseIntegerMvFlag                  bool
 	QpDelta                           int
-	CbQpOffset                        int
-	CrQpOffset                        int
-	ActYQpOffset                      int
-	ActCbQpOffset                     int
-	ActCrQpOffset                     int
+	CbQpOffset                        int8
+	CrQpOffset                        int8
+	ActYQpOffset                      int8
+	ActCbQpOffset                     int8
+	ActCrQpOffset                     int8
 	CuChromaQpOffsetEnabledFlag       bool
 	DeblockingFilterOverrideFlag      bool
 	DeblockingFilterDisabledFlag      bool
-	BetaOffsetDiv2                    int
-	TcOffsetDiv2                      int
+	BetaOffsetDiv2                    int8
+	TcOffsetDiv2                      int8
 	LoopFilterAcrossSlicesEnabledFlag bool
 	NumEntryPointOffsets              uint
 	OffsetLenMinus1                   uint8
 	EntryPointOffsetMinus1            []uint32
-	SegmentHeaderExtensionLength      uint
+	SegmentHeaderExtensionLength      uint16
 	SegmentHeaderExtensionDataByte    []byte
 	Size                              uint32
 }
 
 type LongTermRPS struct {
-	PocLsbLt               uint
+	PocLsbLt               uint16
 	UsedByCurrPicLtFlag    bool
 	DeltaPocMsbPresentFlag bool
 	DeltaPocMsbCycleLt     uint
@@ -101,8 +97,8 @@ type RefPicListsModification struct {
 }
 
 type PredWeightTable struct {
-	LumaLog2WeightDenom        uint
-	DeltaChromaLog2WeightDenom int
+	LumaLog2WeightDenom        uint8
+	DeltaChromaLog2WeightDenom int8
 	WeightsL0                  []Weight
 	WeightsL1                  []Weight
 }
@@ -110,9 +106,9 @@ type PredWeightTable struct {
 type Weight struct {
 	LumaWeightFlag    bool
 	ChromaWeightFlag  bool
-	DeltaLumaWeight   int
+	DeltaLumaWeight   int8
 	LumaOffset        int
-	DeltaChromaWeight [2]int
+	DeltaChromaWeight [2]int8
 	DeltaChromaOffset [2]int
 }
 
@@ -133,9 +129,7 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 	if !ok {
 		return nil, fmt.Errorf("pps ID %d unknown", sh.PicParameterSetId)
 	}
-
-	var sps *SPS
-	sps, ok = spsMap[pps.SeqParameterSetID]
+	sps, ok := spsMap[pps.SeqParameterSetID]
 	if !ok {
 		return nil, fmt.Errorf("sps ID %d unknown", pps.SeqParameterSetID)
 	}
@@ -144,30 +138,37 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 		if pps.DependentSliceSegmentsEnabledFlag {
 			sh.DependentSliceSegmentFlag = r.ReadFlag()
 		}
-		CtbLog2SizeY := sps.Log2MinLumaCodingBlockSizeMinus3 + 3 + sps.Log2DiffMaxMinLumaCodingBlockSize
-		CtbSizeY := uint(1 << CtbLog2SizeY)
-		PicHeightInCtbsY := ceilDiv(uint(sps.PicHeightInLumaSamples), CtbSizeY)
-		PicWidthInCtbsY := ceilDiv(uint(sps.PicWidthInLumaSamples), CtbSizeY)
-		PicSizeInCtbsY := PicWidthInCtbsY * PicHeightInCtbsY
-		sh.SegmentAddress = r.Read(ceilLog2(PicSizeInCtbsY))
+		/*
+			MinCbLog2SizeY = log2_min_luma_coding_block_size_minus3 + 3
+			CtbLog2SizeY = MinCbLog2SizeY + log2_diff_max_min_luma_coding_block_size
+			CtbSizeY = 1 << CtbLog2SizeY
+		*/
+		CtbSizeY := uint(1 << (sps.Log2MinLumaCodingBlockSizeMinus3 + 3 + sps.Log2DiffMaxMinLumaCodingBlockSize))
+		/*
+			PicWidthInCtbsY = Ceil( pic_width_in_luma_samples ÷ CtbSizeY )
+			PicHeightInCtbsY = Ceil( pic_height_in_luma_samples ÷ CtbSizeY )
+			PicSizeInCtbsY = PicWidthInCtbsY * PicHeightInCtbsY
+		*/
+		PicSizeInCtbsY := ceilDiv(uint(sps.PicWidthInLumaSamples), CtbSizeY) *
+			ceilDiv(uint(sps.PicHeightInLumaSamples), CtbSizeY)
+		sh.SegmentAddress = r.Read(bits.CeilLog2(PicSizeInCtbsY))
 	}
 
-	/*
-			NumPicTotalCurr = 0
-			if( nal_unit_type != IDR_W_RADL && nal_unit_type != IDR_N_LP ) {
-			for( i = 0; i < NumNegativePics[ CurrRpsIdx ]; i++ ) if( UsedByCurrPicS0[ CurrRpsIdx ][ i ] )
-			NumPicTotalCurr++
-			for( i = 0; i < NumPositivePics[ CurrRpsIdx ]; i++ ) if( UsedByCurrPicS1[ CurrRpsIdx ][ i ] )
-		    NumPicTotalCurr++
-			for( i = 0; i < num_long_term_sps + num_long_term_pics; i++ ) if( UsedByCurrPicLt[ i ] )
-			NumPicTotalCurr++
-			}
-			if( pps_curr_pic_ref_enabled_flag )
-			NumPicTotalCurr++
-			NumPicTotalCurr += NumActiveRefLayerPics
-	*/
-
 	if !sh.DependentSliceSegmentFlag {
+		/*
+				NumPicTotalCurr = 0
+				if( nal_unit_type != IDR_W_RADL && nal_unit_type != IDR_N_LP ) {
+				for( i = 0; i < NumNegativePics[ CurrRpsIdx ]; i++ ) if( UsedByCurrPicS0[ CurrRpsIdx ][ i ] )
+				NumPicTotalCurr++
+				for( i = 0; i < NumPositivePics[ CurrRpsIdx ]; i++ ) if( UsedByCurrPicS1[ CurrRpsIdx ][ i ] )
+			    NumPicTotalCurr++
+				for( i = 0; i < num_long_term_sps + num_long_term_pics; i++ ) if( UsedByCurrPicLt[ i ] )
+				NumPicTotalCurr++
+				}
+				if( pps_curr_pic_ref_enabled_flag )
+				NumPicTotalCurr++
+				NumPicTotalCurr += NumActiveRefLayerPics
+		*/
 		var NumPicTotalCurr uint8
 
 		// The variable ChromaArrayType is derived as equal to 0 when separate_colour_plane_flag is equal to 1
@@ -193,15 +194,18 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 			sh.PicOrderCntLsb = uint16(r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4)))
 			sh.ShortTermRefPicSetSpsFlag = r.ReadFlag()
 
-			// fix this ugly shit
 			if !sh.ShortTermRefPicSetSpsFlag {
-				// errors?
-				strps := parseShortTermRPS(r, sps.NumShortTermRefPicSets,
+				sh.ShortTermRefPicSet = parseShortTermRPS(r, sps.NumShortTermRefPicSets,
 					sps.NumShortTermRefPicSets, sps)
-				sh.ShortTermRefPicSet = &strps
+				if r.AccError() != nil {
+					return sh, r.AccError()
+				}
 			} else if sps.NumShortTermRefPicSets > 1 {
-				sh.ShortTermRefPicSetIdx = byte(r.Read(ceilLog2(uint(sps.NumShortTermRefPicSets))))
-				sh.ShortTermRefPicSet = &sps.ShortTermRefPicSets[sh.ShortTermRefPicSetIdx]
+				sh.ShortTermRefPicSetIdx = byte(r.Read(bits.CeilLog2(uint(sps.NumShortTermRefPicSets))))
+				if int(sh.ShortTermRefPicSetIdx) >= len(sps.ShortTermRefPicSets) {
+					return sh, fmt.Errorf("short_term_ref_pic_set_idx > num_short_term_ref_pic_sets")
+				}
+				sh.ShortTermRefPicSet = sps.ShortTermRefPicSets[sh.ShortTermRefPicSetIdx]
 			}
 			NumPicTotalCurr += sh.ShortTermRefPicSet.CountNegAndPosPics()
 
@@ -211,14 +215,17 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 				}
 				sh.NumLongTermPics = r.ReadExpGolomb()
 				for i := uint(0); i < sh.NumLongTermSps+sh.NumLongTermPics; i++ {
-					lt := LongTermRPS{}
+					var lt LongTermRPS
 					if i < sh.NumLongTermSps {
 						if sps.NumLongTermRefPics > 1 {
-							LtIdxSps := r.Read(ceilLog2(sps.NumLongTermRefPics))
+							LtIdxSps := r.Read(bits.CeilLog2(sps.NumLongTermRefPics))
+							if int(LtIdxSps) >= len(sps.LongTermRefPicSets) {
+								return sh, fmt.Errorf("lt_idx_sps > num_long_term_ref_pics_sps")
+							}
 							lt = sps.LongTermRefPicSets[LtIdxSps]
 						}
 					} else {
-						lt.PocLsbLt = r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4))
+						lt.PocLsbLt = uint16(r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4)))
 						lt.UsedByCurrPicLtFlag = r.ReadFlag()
 					}
 					if lt.UsedByCurrPicLtFlag {
@@ -246,6 +253,7 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 			// When the current slice is a P or B slice and num_ref_idx_l0_active_minus1 is not present,
 			// num_ref_idx_l0_active_minus1 is inferred to be equal to num_ref_idx_l0_default_active_minus1.
 			sh.NumRefIdxActiveMinus1 = pps.NumRefIdxDefaultActiveMinus1
+			// 0 specifies that the syntax elements num_ref_idx_l0_active_minus1 and num_ref_idx_l1_active_minus1 are not present.
 			if sh.NumRefIdxActiveOverrideFlag {
 				// value shall be in the range of 0 to 14, inclusive
 				sh.NumRefIdxActiveMinus1[0] = uint8(r.ReadExpGolomb())
@@ -285,26 +293,29 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 			if (pps.WeightedPredFlag && sh.SliceType == SLICE_P) ||
 				(pps.WeightedBipredFlag && sh.SliceType == SLICE_B) {
 				var err error
-				// fix chromaArrayType
 				sh.PredWeightTable, err = parsePredWeightTable(r, sh.SliceType, sh.NumRefIdxActiveMinus1, ChromaArrayType)
 				if err != nil {
 					return sh, err
 				}
 			}
-			sh.FiveMinusMaxNumMergeCand = r.ReadExpGolomb()
+			// MaxNumMergeCand = 5 − five_minus_max_num_merge_cand
+			//  value of MaxNumMergeCand shall be in the range of 1 to 5, inclusive
+			sh.FiveMinusMaxNumMergeCand = uint8(r.ReadExpGolomb())
 			if sps.SccExtension != nil && sps.SccExtension.MotionVectorResolutionControlIdc == 2 {
 				sh.UseIntegerMvFlag = r.ReadFlag()
 			}
 		}
 		sh.QpDelta = r.ReadSignedGolomb()
 		if pps.SliceChromaQpOffsetsPresentFlag {
-			sh.CbQpOffset = r.ReadSignedGolomb()
-			sh.CrQpOffset = r.ReadSignedGolomb()
+			// values shall be in the range of −12 to +12, inclusive
+			sh.CbQpOffset = int8(r.ReadSignedGolomb())
+			sh.CrQpOffset = int8(r.ReadSignedGolomb())
 		}
 		if pps.SccExtension != nil && pps.SccExtension.SliceActQpOffsetsPresentFlag {
-			sh.ActYQpOffset = r.ReadSignedGolomb()
-			sh.ActCbQpOffset = r.ReadSignedGolomb()
-			sh.ActCrQpOffset = r.ReadSignedGolomb()
+			// values shall be in the range of −12 to +12, inclusive
+			sh.ActYQpOffset = int8(r.ReadSignedGolomb())
+			sh.ActCbQpOffset = int8(r.ReadSignedGolomb())
+			sh.ActCrQpOffset = int8(r.ReadSignedGolomb())
 		}
 		if pps.RangeExtension != nil && pps.RangeExtension.ChromaQpOffsetListEnabledFlag {
 			sh.CuChromaQpOffsetEnabledFlag = r.ReadFlag()
@@ -315,8 +326,9 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 		if sh.DeblockingFilterOverrideFlag {
 			sh.DeblockingFilterDisabledFlag = r.ReadFlag()
 			if !sh.DeblockingFilterDisabledFlag {
-				sh.BetaOffsetDiv2 = r.ReadSignedGolomb()
-				sh.TcOffsetDiv2 = r.ReadSignedGolomb()
+				// values shall both be in the range of −6 to 6, inclusive
+				sh.BetaOffsetDiv2 = int8(r.ReadSignedGolomb())
+				sh.TcOffsetDiv2 = int8(r.ReadSignedGolomb())
 			}
 		}
 		if pps.LoopFilterAcrossSlicesEnabledFlag &&
@@ -335,8 +347,9 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 		}
 	}
 	if pps.SliceSegmentHeaderExtensionPresentFlag {
-		sh.SegmentHeaderExtensionLength = r.ReadExpGolomb()
-		for i := uint(0); i < sh.SegmentHeaderExtensionLength; i++ {
+		// value shall be in the range of 0 to 256, inclusive
+		sh.SegmentHeaderExtensionLength = uint16(r.ReadExpGolomb())
+		for i := uint16(0); i < sh.SegmentHeaderExtensionLength; i++ {
 			sh.SegmentHeaderExtensionDataByte = append(sh.SegmentHeaderExtensionDataByte, byte(r.Read(8)))
 		}
 	}
@@ -363,13 +376,14 @@ func parseRefPicListsModification(r *bits.AccErrEBSPReader, sliceType SliceType,
 	}
 	if rplm.RefPicListModificationFlagL0 {
 		for i := uint8(0); i <= refIdx[0]; i++ {
-			rplm.ListEntryL0 = append(rplm.ListEntryL0, uint8(r.Read(ceilLog2(uint(numPicTotalCurr)))))
+			rplm.ListEntryL0 = append(rplm.ListEntryL0, uint8(r.Read(bits.CeilLog2(uint(numPicTotalCurr)))))
 		}
 	}
 	if sliceType == SLICE_B {
+		rplm.RefPicListModificationFlagL1 = r.ReadFlag()
 		if rplm.RefPicListModificationFlagL1 {
 			for i := uint8(0); i <= refIdx[1]; i++ {
-				rplm.ListEntryL1 = append(rplm.ListEntryL1, uint8(r.Read(ceilLog2(uint(numPicTotalCurr)))))
+				rplm.ListEntryL1 = append(rplm.ListEntryL1, uint8(r.Read(bits.CeilLog2(uint(numPicTotalCurr)))))
 			}
 		}
 	}
@@ -384,10 +398,13 @@ func parseRefPicListsModification(r *bits.AccErrEBSPReader, sliceType SliceType,
 func parsePredWeightTable(r *bits.AccErrEBSPReader, sliceType SliceType,
 	refIdx [2]uint8, chromaArrayType byte) (*PredWeightTable, error) {
 	pwt := &PredWeightTable{
-		LumaLog2WeightDenom: r.ReadExpGolomb(),
+		// value shall be in the range of 0 to 7, inclusive
+		LumaLog2WeightDenom: uint8(r.ReadExpGolomb()),
 	}
 	if chromaArrayType != 0 {
-		pwt.DeltaChromaLog2WeightDenom = r.ReadSignedGolomb()
+		// ChromaLog2WeightDenom is derived to be equal to luma_log2_weight_denom + delta_chroma_log2_weight_denom
+		// and the value shall be in the range of 0 to 7, inclusive
+		pwt.DeltaChromaLog2WeightDenom = int8(r.ReadSignedGolomb())
 	}
 
 	pwt.WeightsL0 = make([]Weight, refIdx[0]+1)
@@ -405,12 +422,14 @@ func parsePredWeightTable(r *bits.AccErrEBSPReader, sliceType SliceType,
 	}
 	for i := uint8(0); i <= refIdx[0]; i++ {
 		if pwt.WeightsL0[i].LumaWeightFlag {
-			pwt.WeightsL0[i].DeltaLumaWeight = r.ReadSignedGolomb()
+			// value shall be in the range of −128 to 127, inclusive
+			pwt.WeightsL0[i].DeltaLumaWeight = int8(r.ReadSignedGolomb())
 			pwt.WeightsL0[i].LumaOffset = r.ReadSignedGolomb()
 		}
 		if pwt.WeightsL0[i].ChromaWeightFlag {
 			for j := 0; j < 2; j++ {
-				pwt.WeightsL0[i].DeltaChromaWeight[j] = r.ReadSignedGolomb()
+				// value shall be in the range of −128 to 127, inclusive
+				pwt.WeightsL0[i].DeltaChromaWeight[j] = int8(r.ReadSignedGolomb())
 				pwt.WeightsL0[i].DeltaChromaOffset[j] = r.ReadSignedGolomb()
 			}
 		}
@@ -431,12 +450,14 @@ func parsePredWeightTable(r *bits.AccErrEBSPReader, sliceType SliceType,
 		}
 		for i := uint8(0); i <= refIdx[1]; i++ {
 			if pwt.WeightsL1[i].LumaWeightFlag {
-				pwt.WeightsL1[i].DeltaLumaWeight = r.ReadSignedGolomb()
+				// value shall be in the range of −128 to 127, inclusive
+				pwt.WeightsL1[i].DeltaLumaWeight = int8(r.ReadSignedGolomb())
 				pwt.WeightsL1[i].LumaOffset = r.ReadSignedGolomb()
 			}
 			if pwt.WeightsL1[i].ChromaWeightFlag {
 				for j := 0; j < 2; j++ {
-					pwt.WeightsL1[i].DeltaChromaWeight[j] = r.ReadSignedGolomb()
+					// value shall be in the range of −128 to 127, inclusive
+					pwt.WeightsL1[i].DeltaChromaWeight[j] = int8(r.ReadSignedGolomb())
 					pwt.WeightsL1[i].DeltaChromaOffset[j] = r.ReadSignedGolomb()
 				}
 			}

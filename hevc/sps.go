@@ -261,7 +261,7 @@ func ParseSPSNALUnit(data []byte) (*SPS, error) {
 		sps.NumLongTermRefPics = r.ReadExpGolomb()
 		for i := uint(0); i < sps.NumLongTermRefPics; i++ {
 			sps.LongTermRefPicSets = append(sps.LongTermRefPicSets, LongTermRPS{
-				PocLsbLt:            r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4)),
+				PocLsbLt:            uint16(r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4))),
 				UsedByCurrPicLtFlag: r.ReadFlag(),
 			})
 		}
@@ -408,11 +408,8 @@ type ShortTermRPS struct {
 	NumDeltaPocs    byte
 }
 
-func (stps *ShortTermRPS) CountNegAndPosPics() uint8 {
+func (stps ShortTermRPS) CountNegAndPosPics() uint8 {
 	var NumPicTotalCurr uint8
-	if stps == nil {
-		return NumPicTotalCurr
-	}
 	for _, n := range stps.UsedByCurrPicS0 {
 		if n {
 			NumPicTotalCurr++
