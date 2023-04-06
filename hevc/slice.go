@@ -46,7 +46,7 @@ type SliceHeader struct {
 	ShortTermRefPicSetSpsFlag         bool
 	ShortTermRefPicSet                ShortTermRPS
 	ShortTermRefPicSetIdx             byte
-	NumLongTermSps                    uint
+	NumLongTermSps                    uint8
 	NumLongTermPics                   uint
 	LongTermRefPicSets                []LongTermRPS
 	TemporalMvpEnabledFlag            bool
@@ -58,7 +58,7 @@ type SliceHeader struct {
 	MvdL1ZeroFlag                     bool
 	CabacInitFlag                     bool
 	CollocatedFromL0Flag              bool
-	CollocatedRefIdx                  uint
+	CollocatedRefIdx                  uint8
 	PredWeightTable                   *PredWeightTable
 	FiveMinusMaxNumMergeCand          uint8
 	UseIntegerMvFlag                  bool
@@ -211,14 +211,15 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 
 			if sps.LongTermRefPicsPresentFlag {
 				if sps.NumLongTermRefPics > 0 {
-					sh.NumLongTermSps = r.ReadExpGolomb()
+					// value shall be in the range of 0 to num_long_term_ref_pics_sps, inclusive
+					sh.NumLongTermSps = uint8(r.ReadExpGolomb())
 				}
 				sh.NumLongTermPics = r.ReadExpGolomb()
-				for i := uint(0); i < sh.NumLongTermSps+sh.NumLongTermPics; i++ {
+				for i := uint(0); i < uint(sh.NumLongTermSps)+sh.NumLongTermPics; i++ {
 					var lt LongTermRPS
-					if i < sh.NumLongTermSps {
+					if i < uint(sh.NumLongTermSps) {
 						if sps.NumLongTermRefPics > 1 {
-							LtIdxSps := r.Read(bits.CeilLog2(sps.NumLongTermRefPics))
+							LtIdxSps := r.Read(bits.CeilLog2(uint(sps.NumLongTermRefPics)))
 							if int(LtIdxSps) >= len(sps.LongTermRefPicSets) {
 								return sh, fmt.Errorf("lt_idx_sps > num_long_term_ref_pics_sps")
 							}
@@ -287,7 +288,8 @@ func ParseSliceHeader(nalu []byte, spsMap map[uint32]*SPS, ppsMap map[uint32]*PP
 				}
 				if (sh.CollocatedFromL0Flag && sh.NumRefIdxActiveMinus1[0] > 0) ||
 					(!sh.CollocatedFromL0Flag && sh.NumRefIdxActiveMinus1[1] > 0) {
-					sh.CollocatedRefIdx = r.ReadExpGolomb()
+					// value shall be in the range of 0 to num_ref_idx_l0_active_minus1, inclusive
+					sh.CollocatedRefIdx = uint8(r.ReadExpGolomb())
 				}
 			}
 			if (pps.WeightedPredFlag && sh.SliceType == SLICE_P) ||

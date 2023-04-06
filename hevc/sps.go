@@ -46,7 +46,7 @@ type SPS struct {
 	NumShortTermRefPicSets               byte
 	ShortTermRefPicSets                  []ShortTermRPS
 	LongTermRefPicsPresentFlag           bool
-	NumLongTermRefPics                   uint
+	NumLongTermRefPics                   uint8
 	LongTermRefPicSets                   []LongTermRPS
 	SpsTemporalMvpEnabledFlag            bool
 	StrongIntraSmoothingEnabledFlag      bool
@@ -258,8 +258,9 @@ func ParseSPSNALUnit(data []byte) (*SPS, error) {
 
 	sps.LongTermRefPicsPresentFlag = r.ReadFlag()
 	if sps.LongTermRefPicsPresentFlag {
-		sps.NumLongTermRefPics = r.ReadExpGolomb()
-		for i := uint(0); i < sps.NumLongTermRefPics; i++ {
+		// value shall be in the range of 0 to 32, inclusive
+		sps.NumLongTermRefPics = uint8(r.ReadExpGolomb())
+		for i := uint8(0); i < sps.NumLongTermRefPics; i++ {
 			sps.LongTermRefPicSets = append(sps.LongTermRefPicSets, LongTermRPS{
 				PocLsbLt:            uint16(r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4))),
 				UsedByCurrPicLtFlag: r.ReadFlag(),
